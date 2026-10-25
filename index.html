@@ -200,14 +200,21 @@ function buildFilters(){
 function ensureMarker(i){
   const d=data[i];
   if(d.lat==null||markers.has(i))return;
-  markers.set(i,L.marker([d.lat,d.lng],{icon:iconFor(d),title:d.Structure}).bindPopup(popup(d,i),{maxWidth:320}));
+  markers.set(i,L.marker([d.lat,d.lng],{icon:iconFor(d),title:d.Structure,riseOnHover:true}).bindPopup(popup(d,i),{maxWidth:320}));
 }
 function render(){
   const q=document.getElementById("q").value.toLowerCase();
   const vis=data.map((d,i)=>[d,i]).filter(([d])=>active.has(d["Catégories d'acteurs"])&&(!q||Object.values(d).join(" ").toLowerCase().includes(q)));
   layer.clearLayers();
   const located=vis.filter(([d])=>d.lat!=null),not=vis.filter(([d])=>d.lat==null);
-  located.forEach(([,i])=>{ensureMarker(i);layer.addLayer(markers.get(i))});
+  const groups={};
+  data.forEach((d,i)=>{if(d.lat!=null)(groups[d.lat+","+d.lng]=groups[d.lat+","+d.lng]||[]).push(i)});
+  Object.values(groups).forEach(ix=>ix.forEach((i,k)=>{   // structures à la même adresse : on les écarte légèrement
+    ensureMarker(i);
+    const d=data[i],n=ix.length,a=2*Math.PI*k/n,r=n>1?0.00018:0;
+    markers.get(i).setLatLng([d.lat+r*Math.sin(a),d.lng+r*Math.cos(a)/Math.cos(d.lat*Math.PI/180)]);
+  }));
+  located.forEach(([,i])=>layer.addLayer(markers.get(i)));
   document.getElementById("count").textContent=`${located.length} sur la carte · ${not.length} sans adresse · ${located.filter(([d])=>isValid(d)).length} validées ♥`;
 }
 let gen=0,fitted=false;
