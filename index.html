@@ -210,11 +210,16 @@ function render(){
   located.forEach(([,i])=>{ensureMarker(i);layer.addLayer(markers.get(i))});
   document.getElementById("count").textContent=`${located.length} sur la carte · ${not.length} sans adresse · ${located.filter(([d])=>isValid(d)).length} validées ♥`;
 }
-let gen=0;
+let gen=0,fitted=false;
 async function setData(nd){
   const my=++gen;
   nd.forEach(d=>{d._valid=SCRIPT_URL?d._sheetValid:(d._sheetValid||validated.has(key(d)));const g=geo[d.Adresse];d.lat=g?g[0]:null;d.lng=g?g[1]:null});
   data=nd;markers=new Map();buildFilters();render();
+  if(!fitted){
+    fitted=true;
+    const pts=nd.filter(d=>d.lat!=null).map(d=>[d.lat,d.lng]).concat([CANTINE]);
+    map.fitBounds(L.latLngBounds(pts).pad(.05),{maxZoom:14});
+  }
   for(let i=0;i<nd.length&&my===gen;i++){
     const d=nd[i];
     if(!d.Adresse||d.Adresse in geo)continue;
