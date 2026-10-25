@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cartographie des acteurs – La Petite Cantine</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  :root{--bg:#fff;--fg:#1d2433;--muted:#667085;--line:#e4e7ec;--panel:#f8f9fb}
+  @media (prefers-color-scheme:dark){:root{--bg:#161a22;--fg:#e8ebf1;--muted:#9aa3b2;--line:#2b3140;--panel:#1d222c}}
+  *{box-sizing:border-box}
+  body{margin:0;font:14px/1.45 system-ui,sans-serif;background:var(--bg);color:var(--fg);display:flex;height:100vh}
+  aside{width:340px;max-width:45vw;display:flex;flex-direction:column;border-right:1px solid var(--line);background:var(--panel)}
+  header{padding:14px 16px 8px}
+  h1{font-size:16px;margin:0 0 2px}
+  header p{margin:0;color:var(--muted);font-size:12px}
+  input[type=search]{margin:8px 16px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg);font:inherit}
+  #filters{padding:0 16px 8px;display:flex;flex-wrap:wrap;gap:6px}
+  .chip{display:inline-flex;align-items:center;gap:6px;padding:3px 9px;border:1px solid var(--line);border-radius:99px;background:var(--bg);cursor:pointer;font-size:12px;user-select:none}
+  .chip i{width:10px;height:10px;border-radius:50%;display:inline-block}
+  .chip.off{opacity:.4}
+  #list{flex:1;overflow:auto;border-top:1px solid var(--line)}
+  .item{padding:8px 16px;border-bottom:1px solid var(--line);cursor:pointer}
+  .item:hover{background:var(--bg)}
+  .item b{display:block}
+  .item small{color:var(--muted)}
+  .item.nolocal{cursor:default}
+  h2{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin:0;padding:10px 16px 4px}
+  #map{flex:1}
+  .pop h3{margin:0 0 2px;font-size:15px}
+  .pop .cat{font-size:12px;margin-bottom:6px}
+  .pop dt{font-weight:600;font-size:12px;margin-top:6px}
+  .pop dd{margin:0}
+  .pop{max-width:300px;max-height:320px;overflow:auto}
+  .pin{background:none;border:0}
+  .pin .dot{width:16px;height:16px;border-radius:50%;border:1.5px solid #fff;box-shadow:0 0 2px rgba(0,0,0,.5)}
+  .pin .heart{font-size:26px;line-height:26px;text-align:center;text-shadow:0 0 2px #fff,0 0 2px #fff,0 1px 3px rgba(0,0,0,.6)}
+  .valid{margin-top:10px;width:100%;padding:7px 10px;border:1px solid #d6336c;border-radius:8px;background:#fff;color:#d6336c;font:inherit;font-weight:600;cursor:pointer}
+  .valid.on{background:#d6336c;color:#fff}
+  #refresh{margin-top:6px;padding:3px 9px;border:1px solid var(--line);border-radius:99px;background:var(--bg);color:var(--fg);font:inherit;font-size:12px;cursor:pointer}
+  .cantine-icon{background:none;border:0}
+  .cantine-icon .star{position:relative;width:36px;height:36px;display:flex;align-items:center;justify-content:center;font-size:30px;line-height:1;color:#f5b301;text-shadow:0 0 2px #7a4b00,0 0 2px #7a4b00,0 1px 4px rgba(0,0,0,.5)}
+  .cantine-icon .star::before{content:"";position:absolute;inset:0;border-radius:50%;background:rgba(245,179,1,.35);animation:pulse 2s ease-out infinite}
+  @keyframes pulse{0%{transform:scale(.6);opacity:1}100%{transform:scale(1.9);opacity:0}}
+  #home{margin:0 16px 8px;padding:7px 10px;border:1px solid #f5b301;border-radius:8px;background:rgba(245,179,1,.15);color:var(--fg);font:inherit;font-weight:600;cursor:pointer;text-align:left}
+  @media (max-width:700px){body{flex-direction:column-reverse}aside{width:100%;max-width:none;height:45vh;border-right:0;border-top:1px solid var(--line)}#map{height:55vh;flex:none}}
+</style>
+</head>
+<body>
+<aside>
+  <header><h1>Cartographie des acteurs</h1><p id="count"></p><p id="status"></p><button id="refresh" title="Recharger depuis le Google Sheet">↻ Actualiser</button></header>
+  <button id="home">★ La Petite Cantine – 10 rue Jubin</button>
+  <input type="search" id="q" placeholder="Rechercher une structure, une adresse…">
+  <div id="filters"></div>
+</aside>
+<div id="map"></div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="geo.js"></script>
+<script>
+const SHEET_ID="1VHss8JvWJ8tp0Q7QMeVgRUvM3-Fp3z7XElxu0HHRrbk", GID="0";
+const SHEET_URL=`https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&gid=${GID}`;
+// URL de l'application web Apps Script (voir apps-script/Code.gs). Vide = validations gardées dans ce navigateur seulement.
+const SCRIPT_URL="";
+const CATS=["Culture_sport_loisirs","Education_Famille","Elus_InstitutionsPubliques","Jeunes_étudiants","Lutte_Précarité","Senior_Handicap","Social_Santé","Solidarité_Environnement_ViedeQuartier","Travail_Entreprises_Commerce","Autres"];
+const COLORS=["#2f6fed","#e8590c","#2b9348","#9c36b5","#d6336c","#0b7285","#e67700","#5c677d","#a61e4d","#868e96"];
+const color=c=>COLORS[Math.max(0,CATS.indexOf(c))];
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const CANTINE=[45.771665,4.867629];
+
+/* ---------- Nettoyage (même logique que pour le CSV « finale ») ---------- */
+const S="Solidarité_Environnement_ViedeQuartier",E="Travail_Entreprises_Commerce",C="Culture_sport_loisirs",SE="Senior_Handicap",ED="Education_Famille",J="Jeunes_étudiants",L_="Lutte_Précarité",I="Elus_InstitutionsPubliques",SS="Social_Santé";
+const CATMAP={"animateurs, personnels de la direction":S,"association de jardin partagé, jardiniers et riverains":S,"association, bénévoles et habitants":S,"association, bénévoles, habitants et personnes handicapées":SE,"associations, acteurs citoyens":S,"cadres":E,"chômeurs":SS,"commerçants":E,"coworking et entrepreneurs":E,"direction, vie associative":C,"employé et chercheurs d'emplois":E,"enfants, prof, parents":ED,"entreprise privée":E,"entreprise à but d'emploi, assez sociale":E,"fonctionnaires":I,"habitants de villeurbanne":S,"ingénieurs":E,"jeunes : mission locale et campus doua":J,"jeunes en difficulté":J,"maison des ainés - ccas":SE,"personnes agées":SE,"personnes en situation de grandes précarités":L_,"personnes isolées, handicapées":SE,"producteurs locaux":E,"public de tout âge et différents profils":C,"responsable d'antenne et bénévoles":L_,"responsables locaux, bénévoles":L_,"sportifs de tout âge":C,"élèves, parents, profs":ED,"élèves, profs":ED,"étudiants":J,"étudiants et autres membres de l'enseignement supérieur":J,"étudiants et bénévoles, associations":J};
+CATS.slice(0,9).forEach(c=>CATMAP[c.toLowerCase()]=c);
+const BYSTRUCT={"le rize":C};
+const TYPOS=[["communiaction","communication"],["familliale","familiale"],["acceuillir","accueillir"],["accopagner","accompagner"],["plûtot","plutôt"],["diplomés","diplômés"],["EPHAD","EHPAD"],["intéréssé","intéressé"],["théatre","théâtre"],["diversifier les ages","diversifier les âges"],["des ages","des âges"]];
+const cap=v=>v?v[0].toUpperCase()+v.slice(1):v;
+function norm(v){
+  v=(v||"").replace(/\r/g,"").replace(/\s*\n\s*/g," ").replace(/\s+/g," ").trim();
+  if(["...","…","-","N/A"].includes(v))return "";
+  if(!v.endsWith("..."))v=v.replace(/[ .;]+$/,"");
+  TYPOS.forEach(([a,b])=>v=v.split(a).join(b));
+  return cap(v);
+}
+function phone(v){const d=v.replace(/\D/g,"");return d.length===10?d.match(/../g).join(" "):v}
+function mail(v){
+  if(/^formulaire/i.test(v))return "Formulaire en ligne de contact";
+  if(v.includes("@")&&!v.includes("http"))return v.replace(/ \/ /g,", ").replace(/[\w.+-]+@[\w.-]+/g,m=>m.toLowerCase());
+  if(/^http/i.test(v))return v.toLowerCase();
+  return v;
+}
+const name=v=>v.replace(/\b[a-zà-ÿ]/g,m=>m.toUpperCase());
+const address=v=>/\d[–-]\d/.test(v)?v.replace(/\s*[–-]\s*/g,"-"):v;
+
+function parseCSV(t){
+  const rows=[];let row=[],f="",q=false;
+  for(let i=0;i<t.length;i++){
+    const c=t[i];
+    if(q){if(c==='"'){if(t[i+1]==='"'){f+='"';i++}else q=false}else f+=c}
+    else if(c==='"')q=true;
+    else if(c===","){row.push(f);f=""}
+    else if(c==="\n"){row.push(f);rows.push(row);row=[];f=""}
+    else if(c!=="\r")f+=c;
+  }
+  if(f||row.length){row.push(f);rows.push(row)}
+  return rows;
+}
+function fromSheet(csv){
+  const r=parseCSV(csv),h=r[0].map(x=>x.trim().replace(/^\((.*)\)$/,"$1")),out=[];
+  r.slice(1).forEach((cells,idx)=>{
+    const d={};h.forEach((k,i)=>d[k]=norm(cells[i]));
+    delete d["commentaires à enlever ensuite"];
+    d._row=idx+2;d._sheetValid=/^(oui|x|1|true|vrai|✓|♥)$/i.test(d["Validé"]||"");delete d["Validé"];
+    if(!Object.values(d).some(Boolean))return;
+    d["Téléphone"]=phone(d["Téléphone"]);d["Mail"]=mail(d["Mail"]);d["Nom Prénom"]=name(d["Nom Prénom"]);d["Adresse"]=address(d["Adresse"]);
+    const raw=(d["Catégories d'acteurs"]||"").toLowerCase();
+    d["Catégories d'acteurs"]=CATMAP[raw]||BYSTRUCT[(d.Structure||"").toLowerCase()]||"Autres";
+    out.push(d);
+  });
+  return out;
+}
+
+/* ---------- Géocodage (API Adresse, cache dans le navigateur) ---------- */
+let geo={};
+try{geo=JSON.parse(localStorage.getItem("cantine-geo")||"{}")}catch(e){}
+Object.entries(window.GEO||{}).forEach(([a,c])=>{if(!(a in geo))geo[a]=c});
+const saveGeo=()=>{try{localStorage.setItem("cantine-geo",JSON.stringify(geo))}catch(e){}};
+async function geocode(a){
+  const q=/Villeurbanne|69/.test(a)?a:a+", Villeurbanne";
+  try{
+    const r=await fetch("https://api-adresse.data.gouv.fr/search/?limit=1&q="+encodeURIComponent(q));
+    const f=(await r.json()).features[0];
+    return f&&f.properties.score>=.5?[f.geometry.coordinates[1],f.geometry.coordinates[0]]:null;
+  }catch(e){return undefined}   // undefined = erreur réseau, on ne mémorise pas
+}
+
+/* ---------- Carte ---------- */
+const map=L.map("map").setView(CANTINE,14);
+L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19,attribution:"© OpenStreetMap"}).addTo(map);
+const layer=L.layerGroup().addTo(map);
+const FIELDS=[["Adresse","Adresse"],["description de la structure","Description"],["Nom Prénom","Contact"],["Téléphone","Téléphone"],["Mail","Mail"],["projets envisagés","Projets envisagés"],["Résultats des échanges","Résultats des échanges"],["limite du projet","Limites du projet"],["Attente de la structure envers la Petite Cantine","Attentes de la structure"],["Mode de communication","Mode de communication"],["Attentes de la Petite Cantine envers la structure","Attentes de la Petite Cantine envers la structure"],["utilités","Utilités"]];
+const key=d=>d.Structure+"|"+d.Adresse;
+let validated=new Set();
+try{validated=new Set(JSON.parse(localStorage.getItem("cantine-valides")||"[]"))}catch(e){}
+const isValid=d=>d._valid!==undefined?d._valid:validated.has(key(d));
+function popup(d,i){
+  const c=d["Catégories d'acteurs"];
+  const link=(k,v)=>{
+    const t=esc(v);
+    if(k==="Mail")return t.replace(/[\w.+-]+@[\w.-]+\.\w+/g,m=>`<a href="mailto:${m}">${m}</a>`).replace(/(https?:\/\/[^\s,]+)/g,u=>`<a href="${u}" target="_blank" rel="noopener">${u}</a>`);
+    if(k==="Téléphone")return t.replace(/(?:\+33|0)(?:[\s.]?\d){9}/g,m=>`<a href="tel:${m.replace(/[^\d+]/g,"")}">${m}</a>`);
+    return t;
+  };
+  const rows=FIELDS.filter(([k])=>d[k]).map(([k,l])=>`<dt>${l}</dt><dd>${link(k,d[k])}</dd>`).join("");
+  return `<div class="pop"><h3>${esc(d.Structure||"(sans nom)")}</h3><div class="cat" style="color:${color(c)}">${esc(c)}</div><dl>${rows}</dl><button class="valid${isValid(d)?" on":""}" onclick="toggleValid(${i})">${isValid(d)?"♥ Collaboration validée (annuler)":"♡ Valider la collaboration"}</button></div>`;
+}
+const iconFor=d=>{
+  const c=color(d["Catégories d'acteurs"]);
+  return isValid(d)
+    ?L.divIcon({className:"pin",html:`<div class="heart" style="color:${c}">♥</div>`,iconSize:[26,26],iconAnchor:[13,13],popupAnchor:[0,-12]})
+    :L.divIcon({className:"pin",html:`<div class="dot" style="background:${c}"></div>`,iconSize:[16,16],iconAnchor:[8,8],popupAnchor:[0,-8]});
+};
+async function toggleValid(i){
+  const d=data[i],v=!isValid(d);
+  d._valid=v;
+  v?validated.add(key(d)):validated.delete(key(d));
+  try{localStorage.setItem("cantine-valides",JSON.stringify([...validated]))}catch(e){}
+  const m=markers.get(i);m.setIcon(iconFor(d));m.setPopupContent(popup(d,i));render();
+  if(!SCRIPT_URL||!d._row)return;
+  status.textContent="Enregistrement dans le Google Sheet…";
+  try{
+    const r=await fetch(SCRIPT_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({row:d._row,structure:d.Structure,valide:v})});
+    const j=await r.json();
+    if(!j.ok)throw new Error(j.error);
+    status.textContent="✓ Validation enregistrée dans le Google Sheet";
+  }catch(e){
+    status.textContent="⚠ Non enregistré dans le Sheet : "+(e.message||e);
+  }
+}
+
+let data=[],markers=new Map(),cats=[],active=new Set();
+const filters=document.getElementById("filters");
+function buildFilters(){
+  const prev=new Set(active),hadAll=active.size===cats.length;
+  cats=CATS.filter(c=>data.some(d=>d["Catégories d'acteurs"]===c));
+  const keep=[...prev].filter(c=>cats.includes(c));
+  active=new Set(hadAll||!keep.length?cats:keep);
+  filters.innerHTML="";
+  cats.forEach(c=>{
+    const e=document.createElement("span");e.className="chip"+(active.has(c)?"":" off");
+    e.innerHTML=`<i style="background:${color(c)}"></i>${esc(c.replace(/_/g," "))}`;
+    e.onclick=()=>{
+      const solo=active.size===1&&active.has(c);
+      active=new Set(solo?cats:[c]);
+      [...filters.children].forEach((el,i)=>el.classList.toggle("off",!active.has(cats[i])));
+      render();
+    };
+    filters.appendChild(e);
+  });
+}
+function ensureMarker(i){
+  const d=data[i];
+  if(d.lat==null||markers.has(i))return;
+  markers.set(i,L.marker([d.lat,d.lng],{icon:iconFor(d),title:d.Structure}).bindPopup(popup(d,i),{maxWidth:320}));
+}
+function render(){
+  const q=document.getElementById("q").value.toLowerCase();
+  const vis=data.map((d,i)=>[d,i]).filter(([d])=>active.has(d["Catégories d'acteurs"])&&(!q||Object.values(d).join(" ").toLowerCase().includes(q)));
+  layer.clearLayers();
+  const located=vis.filter(([d])=>d.lat!=null),not=vis.filter(([d])=>d.lat==null);
+  located.forEach(([,i])=>{ensureMarker(i);layer.addLayer(markers.get(i))});
+  document.getElementById("count").textContent=`${located.length} sur la carte · ${not.length} sans adresse · ${located.filter(([d])=>isValid(d)).length} validées ♥`;
+}
+let gen=0;
+async function setData(nd){
+  const my=++gen;
+  nd.forEach(d=>{d._valid=SCRIPT_URL?d._sheetValid:(d._sheetValid||validated.has(key(d)));const g=geo[d.Adresse];d.lat=g?g[0]:null;d.lng=g?g[1]:null});
+  data=nd;markers=new Map();buildFilters();render();
+  for(let i=0;i<nd.length&&my===gen;i++){
+    const d=nd[i];
+    if(!d.Adresse||d.Adresse in geo)continue;
+    const g=await geocode(d.Adresse);
+    if(g===undefined)continue;
+    geo[d.Adresse]=g;saveGeo();
+    if(g&&my===gen){d.lat=g[0];d.lng=g[1];render()}
+  }
+}
+const status=document.getElementById("status");
+async function load(){
+  status.textContent="Chargement du Google Sheet…";
+  try{
+    const r=await fetch(SHEET_URL,{cache:"no-store"});
+    if(!r.ok)throw new Error(r.status);
+    const rows=fromSheet(await r.text());
+    if(!rows.length)throw new Error("vide");
+    await setData(rows);
+    status.textContent="Source : Google Sheet · actualisé à "+new Date().toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"});
+  }catch(e){
+    status.textContent="⚠ Google Sheet inaccessible — vérifiez le partage du Sheet et votre connexion";
+  }
+}
+
+document.getElementById("q").oninput=render;
+document.getElementById("refresh").onclick=load;
+const home=L.marker(CANTINE,{zIndexOffset:1000,title:"La Petite Cantine",icon:L.divIcon({className:"cantine-icon",html:'<div class="star">★</div>',iconSize:[36,36],iconAnchor:[18,18],popupAnchor:[0,-16]})})
+  .bindPopup('<div class="pop"><h3>★ La Petite Cantine</h3><div class="cat">Villeurbanne</div>10 rue Jubin, 69100 Villeurbanne</div>').addTo(map);
+document.getElementById("home").onclick=()=>{map.setView(CANTINE,15);home.openPopup()};
+load();
+</script>
+</body>
+</html>
